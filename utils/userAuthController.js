@@ -10,6 +10,7 @@ const ActionLog = require('../models/action');  // Assuming ActionLog model is c
 
 // Unified login function
 exports.loginUser = async (req, res) => {
+  console.log('login endpoint hit')
 
   const { email, password } = req.body;
   
@@ -210,6 +211,8 @@ exports.refreshAccessToken = async (req, res) => {
 
 // Modified verifyOtp to include secure cookie handling
 exports.verifyOtp = async (req, res) => {
+
+  console.log('verify point hit')
   const { email, otp } = req.body;
 
   try {
