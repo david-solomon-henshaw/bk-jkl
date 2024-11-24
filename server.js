@@ -16,7 +16,7 @@ app.use(cookieParser());
 app.use(express.json()); // Middleware for parsing JSON 
 app.use(cors({
 
-  origin: 'https://jkl-healthcare.onrender.com/' // or your frontend URL
+  origin: 'https://jkl-healthcare.onrender.com' // or your frontend URL
 
 }));
 // Routes
