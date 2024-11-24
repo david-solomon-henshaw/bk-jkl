@@ -15,7 +15,9 @@ const app = express()
 app.use(cookieParser());
 app.use(express.json()); // Middleware for parsing JSON 
 app.use(cors({
-  origin: 'http://localhost:3000' // or your frontend URL
+
+  origin: 'https://jkl-healthcare.onrender.com/' // or your frontend URL
+
 }));
 // Routes
 app.use('/api/admin', adminAuthRoutes);
