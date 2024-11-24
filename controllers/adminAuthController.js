@@ -7,52 +7,21 @@ const Patient = require('../models/patient');
 const ActionLog = require('../models/action')
 
 
-// Helper function to format time to 12-hour AM/PM format
-const formatTime = (timeString) => {
-  const date = new Date(timeString);
-
-  // Check if the date is valid
-  if (isNaN(date.getTime())) {
-    console.error('Invalid date:', timeString);
-    return 'Invalid time'; // Return a fallback if the date is invalid
-  }
-
-  let hours = date.getHours();
-  let minutes = date.getMinutes();
-  const ampm = hours >= 12 ? 'PM' : 'AM';
-  hours = hours % 12;
-  hours = hours ? hours : 12; // the hour '0' should be '12'
-  minutes = minutes < 10 ? '0' + minutes : minutes;
-  const strTime = hours + ':' + minutes + ' ' + ampm;
-  return strTime;
-};
-
-
-//done
 // Admin registration attach to frontend adminmodal
 exports.registerAdmin = async (req, res) => {
   const { firstName, lastName, email, password } = req.body;
-  console.log(req.user);
+  
 
   try {
     const existingAdmin = await Admin.findOne({ email });
     if (existingAdmin) {
-      // Log failed admin registration attempt (admin already exists)
-      await ActionLog.create({
-        userId: req.user ? req.user._id : null,  // User ID if available, otherwise null
-        userRole: req.user ? req.user.role : 'error', // Log role if available, otherwise error
-        action: 'register_admin',
-        description: `Admin with this email ${email} already exists`,
-        entity: 'admin',  // The entity being affected
-        entityId: null,  // No specific entity ID for failed registration
-        status: 'failed',
-      });
+      
 
       return res.status(400).json({ message: 'An Admin with this email already exists' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const newAdmin = new Admin({
+    const newAdmin = new Admin({ 
       firstName,
       lastName,
       email, 
@@ -76,453 +45,28 @@ exports.registerAdmin = async (req, res) => {
   } catch (error) {
     console.log(error);
 
-    // Log failure due to error during registration
-    await ActionLog.create({
-      userId: req.user ? req.user._id : null,  // Log the current user if available, otherwise null
-      userRole: req.user ? req.user.role : 'error',  // Log the role if available, otherwise 'error'
-      action: 'register_admin',
-      description: 'Error during admin registration: ' + error.message,
-      entity: 'admin',  // The entity where the error occurred
-      entityId: null,  // No specific entity ID for failed registration
-      errorDetails: error.stack,  // Log the stack trace for debugging
-      status: 'failed',
-    });
 
     res.status(500).json({ message: 'Error registering admin', error });
   }
 };
 
-
-
 exports.getAllAppointments = async (req, res) => {
-  const adminId = req.query.adminId || req.user?._id;  // Fallback to authenticated user if adminId is not provided
-
+ 
   try {
-    const appointments = await Appointment.find()
+    const appointmentsArray = await Appointment.find()
       .populate('caregiver', 'firstName lastName')
       .populate('patient', 'firstName lastName');
     
-    // Action Log: Admin views all appointments
-    await ActionLog.create({
-      userId: adminId,  // Assuming the user is authenticated and available in req.user
-      userRole: 'admin',  // The role of the user performing the action
-      action: 'view_appointments',
-      description: `Admin viewed all appointments`,
-      entity: 'appointment',  // Entity being affected (appointments)
-      entityId: null,  // No specific appointment entity affected
-      status: 'success',  // Assuming the action is successful
-    });
+    
 
-    res.status(200).json({ appointments });
+    res.status(200).json(appointmentsArray );
   } catch (error) {
-    // Log failed action when error occurs while fetching appointments
-    await ActionLog.create({
-      userId: adminId || null, // Log the user if authenticated; otherwise, set to null
-      userRole: adminId ? 'admin' : null, // Set role if user is authenticated, otherwise null
-      action: 'view_appointments',
-      description: `Error fetching appointments: ${error.message}`, // Include the error message in the log
-      entity: 'error', // Set to 'error' for general errors not tied to a specific entity
-      entityId: null, // No specific entity ID for this error
-      errorDetails: error.stack,  // Log the stack trace for debugging
-      status: 'failed', // Log as a failure
-    });
 
     console.error('Error fetching appointments:', error);
     res.status(500).json({ message: 'Error fetching appointments. Please try again later.' });
   }
 };
 
-
-exports.updateAppointment = async (req, res) => {
-  try {
-    const { appointmentId } = req.params;
-    const { status, caregiverId, appointmentDate, startTime } = req.body;
-    const storedValue = req.body.storedValue || req.user?._id; // Use authenticated user's ID if available
-
-    // Find the appointment by ID
-    const appointment = await Appointment.findById(appointmentId);
-
-    // In case appointment is not found
-    if (!appointment) {
-      // Log failed action due to appointment not being found
-      await ActionLog.create({
-        userId: storedValue,
-        userRole: 'admin', // Dynamically assign role if available
-        action: 'update_appointment',
-        description: `Failed to update appointment. Appointment with ID ${appointmentId || 'N/A'} not found.`,
-        entity: 'appointment',
-        entityId: appointmentId || null,
-        status: 'failed',
-      });
-
-      return res.status(404).json({ message: 'Appointment not found' });
-    }
-
-    // In case caregiver is not found
-    if (caregiverId) {
-      const caregiver = await Caregiver.findById(caregiverId);
-      if (!caregiver) {
-        // Log failed action due to caregiver not being found
-        await ActionLog.create({
-          userId: storedValue,
-          userRole: 'admin',
-          action: 'update_appointment',
-          description: `Caregiver with ID ${caregiverId} not found`,
-          entity: 'caregiver',
-          entityId: caregiverId,
-          status: 'failed',
-        });
-        return res.status(404).json({ message: 'Caregiver not found' });
-      }
-    }
-
-    // Update appointment fields
-    if (status) appointment.status = status;
-    if (appointmentDate) appointment.appointmentDate = appointmentDate;
-    if (startTime) appointment.startTime = startTime;
-
-    // Set the approval timestamp if status is changed to 'approved'
-    if (status === 'approved' && !appointment.approvedAt) {
-      appointment.approvedAt = Date.now();
-    }
-
-    // Update caregiver if provided
-    if (caregiverId) {
-      appointment.caregiver = caregiverId;
-    }
-
-    // Save the updated appointment
-    await appointment.save();
-
-    // Log success after updating the appointment
-    await ActionLog.create({
-      userId: storedValue,
-      userRole: 'admin',
-      action: 'update_appointment',
-      description: `Successfully updated appointment with ID ${appointmentId}`,
-      entity: 'appointment',
-      entityId: appointmentId,
-      status: 'success',
-    });
-
-    // Find the patient and caregiver to send the emails
-    const patient = await Patient.findById(appointment.patient);
-    const caregiver = await Caregiver.findById(appointment.caregiver);
-
-    let patientSubject = '';
-    let caregiverSubject = '';
-    let patientMessage = '';
-    let caregiverMessage = '';
-
-    // Basic email styling and structure
-    const emailStyle = `
-      <style>
-        body {
-          font-family: Arial, sans-serif;
-          margin: 0;
-          padding: 0;
-          background-color: #f4f4f4;
-        }
-        .email-container {
-          width: 100%;
-          max-width: 600px;
-          margin: 0 auto;
-          background-color: #ffffff;
-          padding: 20px;
-          border-radius: 8px;
-        }
-        .email-header {
-          background-color: #007bff;
-          color: white;
-          padding: 10px;
-          text-align: center;
-          border-radius: 8px 8px 0 0;
-        }
-        .email-body {
-          padding: 20px;
-          text-align: left;
-          line-height: 1.6;
-        }
-        .footer {
-          text-align: center;
-          margin-top: 20px;
-          font-size: 12px;
-          color: #555;
-        }
-        .btn {
-          background-color: #28a745;
-          color: white;
-          padding: 10px 20px;
-          text-decoration: none;
-          border-radius: 4px;
-          display: inline-block;
-          margin-top: 20px;
-        }
-      </style>
-    `;
-
-    // Customize email content based on appointment status
-    if (status === 'approved') {
-      patientSubject = 'Appointment Approved';
-      patientMessage = `
-        <div class="email-container">
-          <div class="email-header">
-            <h2>Appointment Approved</h2>
-          </div>
-          <div class="email-body">
-            <p>Dear ${patient.firstName},</p>
-            <p>Your appointment on <strong>${appointment.appointmentDate}</strong> at <strong>${formatTime(appointment.startTime)}</strong> has been approved.</p>
-            <p><strong>Caregiver:</strong> ${caregiver.firstName} ${caregiver.lastName}</p>
-            <p>Please be on time.</p>
-            <a href="#" class="btn">View Appointment Details</a>
-          </div>
-          <div class="footer">
-            <p>Best regards,<br/>Admin</p>
-          </div>
-        </div>
-      `;
-      caregiverSubject = 'New Appointment Assignment';
-      caregiverMessage = `
-        <div class="email-container">
-          <div class="email-header">
-            <h2>New Appointment Assignment</h2>
-          </div>
-          <div class="email-body">
-            <p>Dear ${caregiver.firstName},</p>
-            <p>You have been assigned to an appointment with ${patient.firstName} ${patient.lastName}.</p>
-            <p><strong>Appointment Date:</strong> ${appointment.appointmentDate}</p>
-            <p><strong>Start Time:</strong> ${formatTime(appointment.startTime)}</p>
-            <p>Please ensure to attend the appointment on time.</p>
-            <a href="#" class="btn">View Appointment Details</a>
-          </div>
-          <div class="footer">
-            <p>Best regards,<br/>Admin</p>
-          </div>
-        </div>
-      `;
-    }
-
-    // Send email to patient and caregiver
-    if (patient.email) {
-      await nodemailer.sendMail({
-        from: process.env.EMAIL, 
-        to: patient.email,
-        subject: patientSubject,
-        html: emailStyle + patientMessage,
-      });
-    }
-
-    if (caregiver && caregiver.email) {
-      await nodemailer.sendMail({
-        from: process.env.EMAIL, 
-        to: caregiver.email,
-        subject: caregiverSubject,
-        html: emailStyle + caregiverMessage,
-      });
-    }
-
-    // Respond with the updated appointment
-    res.status(200).json({ message: 'Appointment updated successfully', appointment });
-  } catch (error) {
-    // Log failed action if an error occurs during appointment update
-    await ActionLog.create({
-      userId: storedValue,
-      userRole: 'admin',
-      action: 'update_appointment',
-      description: `Error updating appointment with ID ${appointmentId}: ${error.message}`,
-      entity: 'error',
-      entityId: appointmentId,
-      status: 'failed',
-    });
-
-    // Send error response
-    res.status(500).json({ message: 'Error updating appointment', error });
-  }
-};
-
-
-exports.cancelAppointment = async (req, res) => {
-  try {
-    const { appointmentId } = req.params;
-    const { status } = req.body; // Default status to 'cancelled'
-    const { storedValue } = req.body;
-
-    // Ensure storedValue exists
-    const userId = storedValue || null;
-
-    // Find the appointment by ID
-    const appointment = await Appointment.findById(appointmentId);
-    if (!appointment) {
-      // Log the failed action
-      await ActionLog.create({
-        userId,
-        userRole: 'admin',
-        action: 'cancel_appointment',
-        description: `Failed to cancel appointment: Appointment with ID ${appointmentId} not found`,
-        entity: 'appointment',
-        entityId: appointmentId || null,
-        status: 'failed',
-      });
-      return res.status(404).json({ message: 'Appointment not found' });
-    }
-
-    // Check if the current status is already 'cancelled'
-    if (appointment.status === 'canceled') {
-      // Log the redundant action
-      await ActionLog.create({
-        userId,
-        userRole: 'admin',
-        action: 'cancel_appointment',
-        description: `Attempted to cancel already cancelled appointment with ID ${appointmentId}`,
-        entity: 'appointment',
-        entityId: appointmentId,
-        status: 'failed',
-      });
-      return res.status(400).json({ message: 'Appointment is already cancelled' });
-    }
-
-    // Update the appointment status to 'cancelled'
-    appointment.status = status;
-
-    // Save the updated appointment
-    await appointment.save();
-
-    // Find the patient to send the email
-    const patient = await Patient.findById(appointment.patient);
-
-    // Define email subject and message for the patient
-    const patientSubject = 'Appointment Canceled';
-    const emailStyle = `
-      <style>
-        body { font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }
-        .email-container { width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 20px; border-radius: 8px; }
-        .email-header { background-color: #007bff; color: white; padding: 10px; text-align: center; border-radius: 8px 8px 0 0; }
-        .email-body { padding: 20px; text-align: left; line-height: 1.6; }
-        .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #555; }
-        .btn { background-color: #dc3545; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; display: inline-block; margin-top: 20px; }
-      </style>
-    `;
-
-    const patientMessage = `
-      <div class="email-container">
-        <div class="email-header"><h2>Appointment Cancelled</h2></div>
-        <div class="email-body">
-          <p>Dear ${patient.firstName},</p>
-          <p>We regret to inform you that your appointment that you booked on  <strong>${appointment.patientRequestedDate}</strong> at <strong>${formatTime(appointment.patientRequestedTime)}</strong> has been cancelled.</p>
-          <p>Please contact us for rescheduling or further assistance.</p>
-          <a href="#" class="btn">Contact Support</a>
-        </div>
-        <div class="footer"><p>Best regards,<br/>JKL Healthcare System</p></div>
-      </div>
-    `;
-
-    // Send email to patient and handle failure
-    if (patient.email) {
-      try {
-        await nodemailer.sendMail({
-          from: process.env.EMAIL, // Use the email in your Nodemailer config
-          to: patient.email,
-          subject: patientSubject,
-          html: emailStyle + patientMessage,
-        });
-      } catch (emailError) {
-        // Log email failure
-        await ActionLog.create({
-          userId,
-          userRole: 'admin',
-          action: 'cancel_appointment',
-          description: `Failed to send cancellation email to patient with ID ${patient._id} for appointment ${appointmentId}: ${emailError.message}`,
-          entity: 'appointment',
-          entityId: appointmentId,
-          status: 'failed',
-        });
-
-        return res.status(500).json({ message: 'Error sending cancellation email', error: emailError });
-      }
-    }
-
-    // Log the successful action
-    await ActionLog.create({
-      userId,
-      userRole: 'admin',
-      action: 'cancel_appointment',
-      description: `Successfully cancelled appointment with ID ${appointmentId}`,
-      entity: 'appointment',
-      entityId: appointmentId,
-      status: 'success',
-    });
-
-    // Respond with the updated appointment
-    res.status(200).json({ message: 'Appointment canceled successfully', appointment });
-  } catch (error) {
-    // Log the error
-    console.log(error);
-
-    // Log the failed action
-    await ActionLog.create({
-      userId: storedValue || null,
-      userRole: 'admin',
-      action: 'cancel_appointment',
-      description: `Error canceling appointment with ID ${appointmentId}: ${error.message}`,
-      entity: 'error',
-      entityId: appointmentId,
-      status: 'failed',
-    });
-
-    res.status(500).json({ message: 'Error canceling appointment', error });
-  }
-};
-
-
-// exports.createCaregiver = async (req, res) => {
-//   try {
-//     const { firstName, lastName, email, phoneNumber, password, department, available, storedValue } = req.body;
-
-//     const hashedPassword = await bcrypt.hash(password, 10); // Hash the password
-//     const newCaregiver = new Caregiver({
-//       firstName,
-//       lastName,
-//       email,
-//       phoneNumber,
-//       password: hashedPassword, // Store the hashed password
-//       department,
-//       available: available !== undefined ? available : true, // Default to true if not provided
-//     });
-
-//     await newCaregiver.save();
-
-
-//     // Log successful caregiver creation
-//     await ActionLog.create({
-//       userId: storedValue,  // Log the admin's ID from the request
-//       userRole: 'admin',  // Admin is creating the caregiver
-//       action: 'create_caregiver',
-//       description: `New caregiver created: ${firstName} ${lastName} in department ${department}`,
-//       entity: 'caregiver',
-//       entityId: newCaregiver._id,  // Reference to the newly created caregiver
-//       status: 'success',
-//     });
-
-//     res.status(201).json({ message: 'Caregiver created successfully', caregiver: newCaregiver });
-//   } catch (error) {
-//     // Log failure due to error during caregiver creation
-//     await ActionLog.create({
-//       userId: req.user ? storedValue : null,  // Admin's ID if logged in, else null
-//       userRole: 'admin',  // Admin attempting to create caregiver
-//       action: 'create_caregiver',
-//       description: `Error creating caregiver: ${error.message}`,
-//       entity: 'error',  // Entity is 'error' due to failure
-//       entityId: null,  // No caregiver to reference due to failure
-//       status: 'failed',
-//     });
-
-//     res.status(500).json({ message: error.message });
-//   }
-// };
-
-
-
-// Admin can get all caregivers
 
 exports.createCaregiver = async (req, res) => {
   const adminId = req.user.id; // Get admin ID from the token
@@ -552,7 +96,7 @@ exports.createCaregiver = async (req, res) => {
       userId: adminId,
       userRole: 'admin',
       action: 'create_caregiver',
-      description: `New caregiver created by ${adminName}: ${firstName} ${lastName} in department ${department}`,
+      description: `A new caregiver was created with name: ${firstName} ${lastName} email: ${email} by ${adminName} in department ${department}`,
       entity: 'caregiver',
       entityId: newCaregiver._id,
       status: 'success',
@@ -560,16 +104,7 @@ exports.createCaregiver = async (req, res) => {
 
     res.status(201).json({ message: 'Caregiver created successfully', caregiver: newCaregiver });
   } catch (error) {
-    // Log failure
-    await ActionLog.create({
-      userId: adminId,
-      userRole: 'admin',
-      action: 'create_caregiver',
-      description: `Error creating caregiver by admin with ID ${adminId}: ${error.message}`,
-      entity: 'error',
-      entityId: null,
-      status: 'failed',
-    });
+    
 
     res.status(500).json({ message: error.message });
   }
@@ -587,30 +122,54 @@ exports.getAllCaregivers = async (req, res) => {
 };
 
 
-//not implemented this to the frontend yet
 // Admin can update a caregiver by ID
 exports.updateCaregiver = async (req, res) => {
   const { id } = req.params;
+  const user = req.user
   try {
     const updatedCaregiver = await Caregiver.findByIdAndUpdate(id, req.body, { new: true });
     if (!updatedCaregiver) {
       return res.status(404).json({ message: 'Caregiver not found' });
     }
+
+     // Log successful admin registration
+     await ActionLog.create({
+      userId: user.id,  // User ID of the new admin
+      userRole: user.role,  // The role of the user
+      action: 'update_caregiver',
+      description: `The admin updated the caregiver  with name: ${updatedCaregiver.firstName} ${updatedCaregiver.lastName}  with email ${updatedCaregiver.email} Availability`,
+      entity: 'caregiver',  // The entity being created
+      entityId: user.id,  // The entity ID for the new admin
+      status: 'success',
+    });
+
     res.status(200).json({ message: 'Caregiver updated successfully', caregiver: updatedCaregiver });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-//not implemented to ui yet
 // Admin can delete a caregiver by ID
 exports.deleteCaregiver = async (req, res) => {
   const { id } = req.params;
+
+  const user = req.user
   try {
     const deletedCaregiver = await Caregiver.findByIdAndDelete(id);
     if (!deletedCaregiver) {
       return res.status(404).json({ message: 'Caregiver not found' });
     }
+
+    // Log successful admin registration
+    await ActionLog.create({
+      userId: user.id,  // User ID of the new admin
+      userRole: user.role,  // The role of the user
+      action: 'deleted_caregiver',
+      description: `The admin deleted the caregiver account with name: ${deletedCaregiver.firstName} ${deletedCaregiver.lastName}  with email ${deletedCaregiver.email} Availability`,
+      entity: 'caregiver',  // The entity being created
+      entityId: user.id,  // The entity ID for the new admin
+      status: 'success',
+    });
     res.status(200).json({ message: 'Caregiver deleted successfully' });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -849,3 +408,151 @@ exports.getPatientAnalytics = async (req, res) => {
 };
 
 
+
+
+exports.reassignCaregiver = async (req, res) => {
+  const { appointmentId } = req.params;
+  const { caregiver } = req.body;
+
+  const user = req.user
+
+  try {
+    // Check if the caregiver exists and is available
+    const caregiverExists = await Caregiver.findById(caregiver);
+    if (!caregiverExists || !caregiverExists.available) {
+      return res.status(400).json({ message: "Caregiver not available or does not exist" });
+    }
+
+    // Update the appointment with the new caregiver
+    const appointment = await Appointment.findByIdAndUpdate(
+      appointmentId,
+      { caregiver }, // Optionally update status to approved
+      { new: true }
+    );
+
+    if (!appointment) {
+      return res.status(404).json({ message: "Appointment not found" });
+    }
+
+// Log successful admin registration
+await ActionLog.create({
+  userId: user.id,  // User ID of the new admin
+  userRole: user.role,  // The role of the user
+  action: 'reassigned caregiver to an appointment',
+  description: `The admin reassigned the caregiver assigned to this appointment`,
+  entity: 'caregiver',  // The entity being created
+  entityId: user.id,  // The entity ID for the new admin
+  status: 'success',
+});
+
+    res.status(200).json(appointment);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error while reassigning caregiver" });
+  }
+};
+
+
+
+exports.cancelAppointment = async (req, res) => {
+  const { appointmentId } = req.params;
+  const user = req.user
+
+  try {
+    // Update the appointment status to canceled
+    const appointment = await Appointment.findByIdAndUpdate(
+      appointmentId,
+      { status: 'canceled' },
+      { new: true }
+    );
+
+    if (!appointment) {
+      return res.status(404).json({ message: "Appointment not found" });
+    }
+
+    // Log successful admin registration
+await ActionLog.create({
+  userId: user.id,  // User ID of the new admin
+  userRole: user.role,  // The role of the user
+  action: 'reassigned caregiver to an appointment',
+  description: `The Admin canceled the appointment`,
+  entity: 'caregiver',  // The entity being created
+  entityId: user.id,  // The entity ID for the new admin
+  status: 'success',
+});
+
+    res.status(200).json(appointment);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error while canceling appointment" });
+  }
+};
+
+
+exports.approveAppointment = async (req, res) => {
+
+  const user = req.user
+  try {
+    const { appointmentId } = req.params;
+    const { caregiver, appointmentDate, startTime, status } = req.body;
+
+    // First check if appointment exists
+    const existingAppointment = await Appointment.findById(appointmentId);
+    if (!existingAppointment) {
+      return res.status(404).json({ message: "Appointment not found" });
+    }
+
+    // Prepare update object
+    const updateData = {
+      appointmentDate,
+      appointmentTime: startTime,
+      status,
+      approvedAt: Date.now()
+    };
+
+    // Handle caregiver assignment
+    if (caregiver) {
+      // Check caregiver availability if needed
+      const selectedCaregiver = await Caregiver.findById(caregiver);
+      if (!selectedCaregiver) {
+        return res.status(400).json({ message: "Caregiver not found" });
+      }
+      if (!selectedCaregiver.available) {
+        return res.status(400).json({ message: "Caregiver is not available" });
+      }
+      updateData.caregiver = caregiver;
+    } else if (!existingAppointment.caregiver) {
+      return res.status(400).json({ message: "Caregiver must be selected" });
+    }
+
+    // Update the appointment
+    const updatedAppointment = await Appointment.findByIdAndUpdate(
+      appointmentId,
+      updateData,
+      { 
+        new: true,  // Return the updated document
+        runValidators: true  // Run schema validators
+      }
+    );
+
+    // Log successful admin registration
+await ActionLog.create({
+  userId: user.id,  // User ID of the new admin
+  userRole: user.role,  // The role of the user
+  action: 'Approved apointment',
+  description: `The Admin approved an appointment`,
+  entity: 'caregiver',  // The entity being created
+  entityId: user.id,  // The entity ID for the new admin
+  status: 'success',
+});
+    
+    return res.status(200).json({ 
+      message: "Appointment approved", 
+      appointment: updatedAppointment 
+    });
+
+  } catch (error) {
+    console.error("Error in approveAppointment:", error);
+    return res.status(500).json({ message: "Error approving appointment" });
+  }
+};

@@ -17,6 +17,7 @@ exports.loginUser = async (req, res) => {
   try {
     let user;
     let role;
+    let department
 
     // Check if the user is an admin
     user = await Admin.findOne({ email });
@@ -290,7 +291,7 @@ exports.verifyOtp = async (req, res) => {
       user: {
         id: user._id,
         role: user.role,
-        email: user.email
+        email: user.email,
       }
     });
   } catch (error) {

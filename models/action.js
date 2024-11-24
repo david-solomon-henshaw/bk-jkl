@@ -7,13 +7,11 @@ const actionLogSchema = new Schema({
     type: Schema.Types.ObjectId, // Reference to the User who performed the action (Admin, Patient, or Caregiver)
     required: false,  // Nullable in case of system-level actions or errors without a specific user
   },
-
   userRole: {
     type: String,
-    enum: ['admin', 'patient', 'caregiver', 'error', 'Admin'],  // Role of the user performing the action
+    
     required: true  // Ensures the role is always specified for the log
   },
-
   action: {
     type: String,
     required: true  // Description of the action taken (e.g., 'login', 'update appointment', etc.)

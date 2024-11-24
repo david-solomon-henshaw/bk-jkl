@@ -1,4 +1,4 @@
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcrypt');z
 const crypto = require('crypto');
 require('dotenv').config(); // Ensure .env variables are loaded
 

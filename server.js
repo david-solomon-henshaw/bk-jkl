@@ -11,11 +11,11 @@ require('dotenv').config();
 const cors = require('cors');
 
  
-const app = express()
+const app = express() 
 app.use(cookieParser());
 app.use(express.json()); // Middleware for parsing JSON 
 app.use(cors({
-  origin: 'https://jkl-healthcare.onrender.com' // or your frontend URL
+  origin: 'http://localhost:3000' // or your frontend URL
 }));
 // Routes
 app.use('/api/admin', adminAuthRoutes);
@@ -44,3 +44,6 @@ mongoose.connect(process.env.MONGO_DB_STRING_URI)
     process.exit(1); // Exit the process if the connection fails
   });
  
+
+  // Exporting the app for testing
+module.exports = app;  

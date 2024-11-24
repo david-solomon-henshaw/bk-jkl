@@ -10,5 +10,9 @@ router.put('/:id/appointment', authenticate,caregiverController.updateAppointmen
 
 // Define the route for fetching a caregiver profile
 router.get('/:id',authenticate, caregiverController.getCaregiverProfile);
+router.get('/all/patients',authenticate,caregiverController.getAllPatients);
+router.post('/schedule-appointment',authenticate, caregiverController.addAppointment);
+
+
 
 module.exports = router;
