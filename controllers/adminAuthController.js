@@ -2,29 +2,29 @@ const Admin = require('../models/admin');
 const bcrypt = require('bcrypt');
 const Appointment = require('../models/appointment');
 const Caregiver = require('../models/caregiver');
-const nodemailer = require('../config/nodemailerConfig');
 const Patient = require('../models/patient');
 const ActionLog = require('../models/action')
+const transporter = require('../config/nodemailerConfig');
 
 
 // Admin registration attach to frontend adminmodal
 exports.registerAdmin = async (req, res) => {
   const { firstName, lastName, email, password } = req.body;
-  
+
 
   try {
     const existingAdmin = await Admin.findOne({ email });
     if (existingAdmin) {
-      
+
 
       return res.status(400).json({ message: 'An Admin with this email already exists' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const newAdmin = new Admin({ 
+    const newAdmin = new Admin({
       firstName,
       lastName,
-      email, 
+      email,
       password: hashedPassword,
       role: 'admin'
     });
@@ -51,15 +51,15 @@ exports.registerAdmin = async (req, res) => {
 };
 
 exports.getAllAppointments = async (req, res) => {
- 
+
   try {
     const appointmentsArray = await Appointment.find()
       .populate('caregiver', 'firstName lastName')
       .populate('patient', 'firstName lastName');
-    
-    
 
-    res.status(200).json(appointmentsArray );
+
+
+    res.status(200).json(appointmentsArray);
   } catch (error) {
 
     console.error('Error fetching appointments:', error);
@@ -104,7 +104,7 @@ exports.createCaregiver = async (req, res) => {
 
     res.status(201).json({ message: 'Caregiver created successfully', caregiver: newCaregiver });
   } catch (error) {
-    
+
 
     res.status(500).json({ message: error.message });
   }
@@ -132,8 +132,8 @@ exports.updateCaregiver = async (req, res) => {
       return res.status(404).json({ message: 'Caregiver not found' });
     }
 
-     // Log successful admin registration
-     await ActionLog.create({
+    // Log successful admin registration
+    await ActionLog.create({
       userId: user.id,  // User ID of the new admin
       userRole: user.role,  // The role of the user
       action: 'update_caregiver',
@@ -407,14 +407,11 @@ exports.getPatientAnalytics = async (req, res) => {
   }
 };
 
-
-
-
 exports.reassignCaregiver = async (req, res) => {
   const { appointmentId } = req.params;
   const { caregiver } = req.body;
 
-  const user = req.user
+  const user = req.user;
 
   try {
     // Check if the caregiver exists and is available
@@ -423,43 +420,152 @@ exports.reassignCaregiver = async (req, res) => {
       return res.status(400).json({ message: "Caregiver not available or does not exist" });
     }
 
-    // Update the appointment with the new caregiver
-    const appointment = await Appointment.findByIdAndUpdate(
-      appointmentId,
-      { caregiver }, // Optionally update status to approved
-      { new: true }
-    );
-
-    if (!appointment) {
+    // Fetch the existing appointment to see if a caregiver was already assigned
+    const existingAppointment = await Appointment.findById(appointmentId);
+    if (!existingAppointment) {
       return res.status(404).json({ message: "Appointment not found" });
     }
 
-// Log successful admin registration
-await ActionLog.create({
-  userId: user.id,  // User ID of the new admin
-  userRole: user.role,  // The role of the user
-  action: 'reassigned caregiver to an appointment',
-  description: `The admin reassigned the caregiver assigned to this appointment`,
-  entity: 'caregiver',  // The entity being created
-  entityId: user.id,  // The entity ID for the new admin
-  status: 'success',
-});
+    // If the appointment already has a caregiver, reset their availability to true
+    let previousCaregiver = null;
+    if (existingAppointment.caregiver) {
+      previousCaregiver = await Caregiver.findById(existingAppointment.caregiver);
+      if (previousCaregiver) {
+        previousCaregiver.available = true; // Set the previous caregiver's availability to true
+        await previousCaregiver.save(); // Save the updated caregiver's availability
+      }
+    }
 
-    res.status(200).json(appointment);
+    // Update the caregiver availability to false for the new caregiver
+    caregiverExists.available = false;
+    await caregiverExists.save(); // Save caregiver's updated availability
+
+    // Update the appointment with the new caregiver
+    const updatedAppointment = await Appointment.findByIdAndUpdate(
+      appointmentId,
+      { caregiver }, // Assign the new caregiver
+      { new: true }
+    );
+
+    // Fetch patient details for email notification
+    const patient = await Patient.findById(updatedAppointment.patient);
+
+    // Prepare the email content
+    const subject = `Caregiver Reassigned to Your Appointment`;
+
+    // Caregiver email content (New caregiver)
+    const caregiverMessage = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #ddd; padding: 20px; border-radius: 5px; background-color: #d1ecf1;">
+        <h2 style="color: #0c5460; text-align: center;">Caregiver Reassigned</h2>
+        <p style="font-size: 16px; color: #333;">
+          Dear <strong>${caregiverExists.firstName} ${caregiverExists.lastName}</strong>,
+        </p>
+        <p style="font-size: 16px; color: #333;">
+          You have been reassigned to the appointment with <strong>${patient.firstName} ${patient.lastName}</strong> scheduled for <strong>${updatedAppointment.appointmentDate}</strong> at <strong>${updatedAppointment.appointmentTime}</strong>.
+        </p>
+        <p style="font-size: 14px; color: #555;">
+          Please confirm your availability for this appointment. If you have any questions or need further assistance, please don't hesitate to reach out.
+        </p>
+        <p style="font-size: 12px; color: #999; text-align: center; margin-top: 20px;">
+          Thank you,<br>
+          JKL Healthcare Team
+        </p>
+      </div>
+    `;
+
+    // Patient email content
+    const patientMessage = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #ddd; padding: 20px; border-radius: 5px; background-color: #d1ecf1;">
+        <h2 style="color: #0c5460; text-align: center;">Caregiver Reassigned to Your Appointment</h2>
+        <p style="font-size: 16px; color: #333;">
+          Dear <strong>${patient.firstName} ${patient.lastName}</strong>,
+        </p>
+        <p style="font-size: 16px; color: #333;">
+          The caregiver for your appointment scheduled on <strong>${updatedAppointment.appointmentDate}</strong> at <strong>${updatedAppointment.appointmentTime}</strong> has been reassigned to <strong>${caregiverExists.firstName} ${caregiverExists.lastName}</strong>.
+        </p>
+        <p style="font-size: 14px; color: #555;">
+          Please contact us if you have any questions or need further information.
+        </p>
+        <p style="font-size: 12px; color: #999; text-align: center; margin-top: 20px;">
+          Thank you,<br>
+          JKL Healthcare Team
+        </p>
+      </div>
+    `;
+
+    // Previous caregiver email content (if applicable)
+    let previousCaregiverMessage = null;
+    if (previousCaregiver) {
+      previousCaregiverMessage = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #ddd; padding: 20px; border-radius: 5px; background-color: #d1ecf1;">
+          <h2 style="color: #0c5460; text-align: center;">Caregiver Reassignment Notification</h2>
+          <p style="font-size: 16px; color: #333;">
+            Dear <strong>${previousCaregiver.firstName} ${previousCaregiver.lastName}</strong>,
+          </p>
+          <p style="font-size: 16px; color: #333;">
+            We regret to inform you that you have been removed from the appointment scheduled with <strong>${patient.firstName} ${patient.lastName}</strong> on <strong>${updatedAppointment.appointmentDate}</strong> at <strong>${updatedAppointment.appointmentTime}</strong>.
+          </p>
+          <p style="font-size: 14px; color: #555;">
+            Please reach out if you have any questions or need further clarification.
+          </p>
+          <p style="font-size: 12px; color: #999; text-align: center; margin-top: 20px;">
+            Thank you,<br>
+            JKL Healthcare Team
+          </p>
+        </div>
+      `;
+    }
+
+    // Send email to the new caregiver
+    await sendEmail(caregiverExists.email, subject, caregiverMessage);
+
+    // Send email to the patient
+    await sendEmail(patient.email, subject, patientMessage);
+
+    // If there was a previous caregiver, send them an email as well
+    if (previousCaregiver && previousCaregiver.email) {
+      await sendEmail(previousCaregiver.email, 'Caregiver Reassignment Notification', previousCaregiverMessage);
+    }
+
+    // Log the successful caregiver reassignment
+    await ActionLog.create({
+      userId: user.id,  // User ID of the admin
+      userRole: user.role,  // The role of the user
+      action: 'Reassigned caregiver to an appointment',
+      description: `The admin reassigned the caregiver ${caregiverExists.firstName} ${caregiverExists.lastName} to this appointment`,
+      entity: 'appointment',  // The entity being updated
+      entityId: updatedAppointment._id,  // The ID of the appointment
+      status: 'success',
+    });
+
+    // Return the updated appointment
+    res.status(200).json(updatedAppointment);
+
   } catch (error) {
-    console.error(error);
+    console.error("Error in reassignCaregiver:", error);
+
+    // Log the error action in ActionLog
+    await ActionLog.create({
+      userId: user.id || null,
+      userRole: user ? user.role : 'error',
+      action: 'Reassign caregiver to appointment',
+      description: 'Error reassigning caregiver: ' + error.message,
+      entity: 'appointment',
+      entityId: appointmentId,
+      status: 'failed',
+      errorDetails: error.stack,
+    });
+
     res.status(500).json({ message: "Server error while reassigning caregiver" });
   }
 };
 
-
-
 exports.cancelAppointment = async (req, res) => {
   const { appointmentId } = req.params;
-  const user = req.user
+  const user = req.user;
 
   try {
-    // Update the appointment status to canceled
+    // Update the appointment status to 'canceled'
     const appointment = await Appointment.findByIdAndUpdate(
       appointmentId,
       { status: 'canceled' },
@@ -470,28 +576,209 @@ exports.cancelAppointment = async (req, res) => {
       return res.status(404).json({ message: "Appointment not found" });
     }
 
-    // Log successful admin registration
-await ActionLog.create({
-  userId: user.id,  // User ID of the new admin
-  userRole: user.role,  // The role of the user
-  action: 'reassigned caregiver to an appointment',
-  description: `The Admin canceled the appointment`,
-  entity: 'caregiver',  // The entity being created
-  entityId: user.id,  // The entity ID for the new admin
-  status: 'success',
-});
+    // Fetch caregiver and patient details for email notification
+    const caregiver = appointment.caregiver ? await Caregiver.findById(appointment.caregiver) : null;
+    const patient = await Patient.findById(appointment.patient);
 
-    res.status(200).json(appointment);
+    // Prepare email content with styling
+    const subject = `Appointment Canceled: ${appointment.appointmentDate}`;
+
+    // Caregiver email content (only if a caregiver is assigned)
+    const patientMessage = caregiver ? `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #ddd; padding: 20px; border-radius: 5px; background-color: #f8d7da;">
+        <h2 style="color: #721c24; text-align: center;">Appointment Canceled</h2>
+        <p style="font-size: 16px; color: #333;">
+          Dear <strong>${patient.firstName} ${patient.lastName}</strong>,
+        </p>
+        <p style="font-size: 16px; color: #333;">
+      Unfortunately, your appointment ${caregiver ? `with caregiver <strong>${caregiver.firstName} ${caregiver.lastName}</strong>` : ''} scheduled for <strong>${appointment.RequestedDate}</strong> at <strong>${appointment.RequestedTime}</strong> time has been <span style="color: #d9534f; font-weight: bold;">canceled</span>.
+    </p
+        <p style="font-size: 14px; color: #555;">
+          If you have any questions or need further assistance, please don't hesitate to reach out.
+        </p>
+        <p style="font-size: 12px; color: #999; text-align: center; margin-top: 20px;">
+          Thank you,<br>
+          JKL Healthcare Team
+        </p>
+      </div>
+    ` : null;
+
+    // Patient email content (always sent, even if no caregiver is attached)
+    const caregiverMessage = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #ddd; padding: 20px; border-radius: 5px; background-color: #f8d7da;">
+      <h2 style="color: #721c24; text-align: center;">Appointment Canceled</h2>
+      <p style="font-size: 16px; color: #333;">
+        Dear <strong>${caregiver ? caregiver.firstName + ' ' + caregiver.lastName : 'Caregiver'}</strong>,
+      </p>
+      <p style="font-size: 16px; color: #333;">
+        Unfortunately, your appointment with Patient <strong>${patient ? patient.firstName + ' ' + patient.lastName : 'Patient'}</strong> scheduled for <strong>${appointment.appointmentDate}</strong> at <strong>${appointment.appointmentTime}</strong> has been <span style="color: #d9534f; font-weight: bold;">canceled</span>.
+      </p>
+      <p style="font-size: 14px; color: #555;">
+        If you have any questions or need further assistance, please don't hesitate to reach out.
+      </p>
+      <p style="font-size: 12px; color: #999; text-align: center; margin-top: 20px;">
+        Thank you,<br>
+        JKL Healthcare Team
+      </p>
+    </div>  
+    `;
+
+    // Send email to caregiver if a caregiver is attached
+    if (caregiver) {
+      await sendEmail(caregiver.email, subject, caregiverMessage);
+    }
+
+    // Send email to patient
+    await sendEmail(patient.email, subject, patientMessage);
+
+    // Log successful cancellation action
+    await ActionLog.create({
+      userId: user._id,
+      userRole: user.role,
+      action: 'cancel appointment',
+      description: `The Admin canceled appointment with ID: ${appointment._id}`,
+      entity: 'appointment',
+      entityId: appointment._id,
+      status: 'success',
+    });
+
+    res.status(200).json({ message: "Appointment canceled", appointment });
+
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Server error while canceling appointment" });
+    console.error("Error in cancelAppointment:", error);
+
+    // Log the error action in ActionLog
+    await ActionLog.create({
+      userId: user._id || null,
+      userRole: user ? user.role : 'error',
+      action: 'cancel appointment',
+      description: 'Error canceling appointment: ' + error.message,
+      entity: 'appointment',
+      entityId: appointmentId,
+      status: 'failed',
+      errorDetails: error.stack,
+    });
+
+    res.status(500).json({ message: 'Error canceling appointment', error });
+  }
+};
+const sendEmail = async (to, subject, html) => {
+  try {
+    const mailOptions = {
+      from: 'your_email_address',
+      to,
+      subject,
+      html  // Changed from text to html
+    };
+
+    await transporter.sendMail(mailOptions);
+  } catch (error) {
+    console.error("Error sending email:", error);
+    throw new Error('Error sending email');
   }
 };
 
 
-exports.approveAppointment = async (req, res) => {
+// Email template generator functions
+const generateCaregiverEmail = (caregiver, patient, appointment) => {
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    </head>
+    <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333333; max-width: 600px; margin: 0 auto; padding: 20px;">
+      <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; border: 1px solid #e9ecef;">
+        <div style="text-align: center; margin-bottom: 20px;">
+          <h1 style="color: #0056b3; margin: 0;">Appointment Confirmation</h1>
+        </div>
+        
+        <p style="font-size: 16px; margin-bottom: 15px;">Dear <strong style="color: #2c3e50;">${caregiver.firstName}</strong>,</p>
+        
+        <div style="background-color: #ffffff; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #0056b3;">
+          <p style="margin: 0;">Your appointment has been approved with:</p>
+          <ul style="list-style: none; padding: 0; margin: 10px 0;">
+            <li style="margin: 5px 0;">
+              <span style="color: #666;">Patient:</span> 
+              <strong style="color: #2c3e50;">${patient.firstName} ${patient.lastName}</strong>
+            </li>
+            <li style="margin: 5px 0;">
+              <span style="color: #666;">Date:</span> 
+              <strong style="color: #2c3e50;">${appointment.appointmentDate}</strong>
+            </li>
+            <li style="margin: 5px 0;">
+              <span style="color: #666;">Time:</span> 
+              <strong style="color: #2c3e50;">${appointment.appointmentTime}</strong>
+            </li>
+          </ul>
+        </div>
 
-  const user = req.user
+        <p style="font-size: 16px;">Please mark this in your calendar.</p>
+        
+        <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e9ecef;">
+          <p style="margin: 0; color: #666;">Thank you,</p>
+          <p style="margin: 5px 0; color: #0056b3; font-weight: bold;">JKL Healthcare</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+};
+
+const generatePatientEmail = (patient, caregiver, appointment) => {
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    </head>
+    <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333333; max-width: 600px; margin: 0 auto; padding: 20px;">
+      <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; border: 1px solid #e9ecef;">
+        <div style="text-align: center; margin-bottom: 20px;">
+          <h1 style="color: #0056b3; margin: 0;">Appointment Confirmation</h1>
+        </div>
+        
+        <p style="font-size: 16px; margin-bottom: 15px;">Dear <strong style="color: #2c3e50;">${patient.firstName}</strong>,</p>
+        
+        <div style="background-color: #ffffff; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #0056b3;">
+          <p style="margin: 0;">Your appointment has been approved with:</p>
+          <ul style="list-style: none; padding: 0; margin: 10px 0;">
+            <li style="margin: 5px 0;">
+              <span style="color: #666;">Caregiver:</span> 
+              <strong style="color: #2c3e50;">${caregiver.firstName} ${caregiver.lastName}</strong>
+            </li>
+            <li style="margin: 5px 0;">
+              <span style="color: #666;">Date:</span> 
+              <strong style="color: #2c3e50;">${appointment.appointmentDate}</strong>
+            </li>
+            <li style="margin: 5px 0;">
+              <span style="color: #666;">Time:</span> 
+              <strong style="color: #2c3e50;">${appointment.appointmentTime}</strong>
+            </li>
+          </ul>
+        </div>
+
+        <div style="background-color: #e8f4fd; padding: 15px; border-radius: 6px; margin: 20px 0;">
+          <p style="margin: 0; color: #0056b3;">
+            <strong>Note:</strong> Please arrive 5 minutes before your scheduled appointment time.
+          </p>
+        </div>
+        
+        <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e9ecef;">
+          <p style="margin: 0; color: #666;">Thank you for choosing</p>
+          <p style="margin: 5px 0; color: #0056b3; font-weight: bold;">JKL Healthcare</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+};
+
+exports.approveAppointment = async (req, res) => {
+  const user = req.user;
+
   try {
     const { appointmentId } = req.params;
     const { caregiver, appointmentDate, startTime, status } = req.body;
@@ -520,7 +807,11 @@ exports.approveAppointment = async (req, res) => {
       if (!selectedCaregiver.available) {
         return res.status(400).json({ message: "Caregiver is not available" });
       }
+
+      // Assign caregiver and set availability to false
       updateData.caregiver = caregiver;
+      selectedCaregiver.available = false; // Update availability
+      await selectedCaregiver.save(); // Save caregiver update
     } else if (!existingAppointment.caregiver) {
       return res.status(400).json({ message: "Caregiver must be selected" });
     }
@@ -529,26 +820,39 @@ exports.approveAppointment = async (req, res) => {
     const updatedAppointment = await Appointment.findByIdAndUpdate(
       appointmentId,
       updateData,
-      { 
+      {
         new: true,  // Return the updated document
         runValidators: true  // Run schema validators
       }
     );
+    const subject = `Appointment Approved: ${updatedAppointment.appointmentDate}`;
+    // Fetch caregiver and patient details for email notification
+    const selectedCaregiver = await Caregiver.findById(updatedAppointment.caregiver);
+    const patient = await Patient.findById(updatedAppointment.patient);
+
+    const caregiverHtml = generateCaregiverEmail(selectedCaregiver, patient, updatedAppointment);
+    const patientHtml = generatePatientEmail(patient, selectedCaregiver, updatedAppointment);
+
+
+    // Send HTML emails
+    await sendEmail(selectedCaregiver.email, subject, caregiverHtml);
+    await sendEmail(patient.email, subject, patientHtml);
+
 
     // Log successful admin registration
-await ActionLog.create({
-  userId: user.id,  // User ID of the new admin
-  userRole: user.role,  // The role of the user
-  action: 'Approved apointment',
-  description: `The Admin approved an appointment`,
-  entity: 'caregiver',  // The entity being created
-  entityId: user.id,  // The entity ID for the new admin
-  status: 'success',
-});
-    
-    return res.status(200).json({ 
-      message: "Appointment approved", 
-      appointment: updatedAppointment 
+    await ActionLog.create({
+      userId: user.id,  // User ID of the admin
+      userRole: user.role,  // The role of the user
+      action: 'Approved appointment',
+      description: `The Admin approved an appointment`,
+      entity: 'appointment',  // The entity being updated
+      entityId: updatedAppointment._id,  // The ID of the appointment
+      status: 'success',
+    });
+
+    return res.status(200).json({
+      message: "Appointment approved and caregiver marked unavailable",
+      appointment: updatedAppointment
     });
 
   } catch (error) {
@@ -556,3 +860,4 @@ await ActionLog.create({
     return res.status(500).json({ message: "Error approving appointment" });
   }
 };
+// Updated sendEmail function to handle HTML content

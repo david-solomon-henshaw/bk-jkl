@@ -10,7 +10,6 @@ const ActionLog = require('../models/action');  // Assuming ActionLog model is c
 
 // Unified login function
 exports.loginUser = async (req, res) => {
-  console.log('login endpoint hit')
 
   const { email, password } = req.body;
   
@@ -18,7 +17,6 @@ exports.loginUser = async (req, res) => {
   try {
     let user;
     let role;
-    let department
 
     // Check if the user is an admin
     user = await Admin.findOne({ email });
@@ -87,14 +85,14 @@ exports.loginUser = async (req, res) => {
                 This OTP is valid for a short time. If you didn't request this, please ignore this email or contact support.
             </p>
             <p style="font-size: 12px; color: #999; text-align: center; margin-top: 20px;">
-                Thank you for using eMed!<br>
-                The eMed Team
+                Thank you for using JKL HealthCare Limited!<br>
+                The JKL HealthCare Limited Team
             </p>
         </div> `
       ;
 
     const info = await transporter.sendMail({
-      from: 'Emed',
+      from: '"JKL-Healthcare" <your-email@example.com>',
       to: user.email,
       subject: 'Your OTP Code',
       html: htmlContent,
@@ -211,8 +209,6 @@ exports.refreshAccessToken = async (req, res) => {
 
 // Modified verifyOtp to include secure cookie handling
 exports.verifyOtp = async (req, res) => {
-
-  console.log('verify point hit')
   const { email, otp } = req.body;
 
   try {
@@ -287,6 +283,16 @@ exports.verifyOtp = async (req, res) => {
       status: 'success',
     });
 
+
+    const check =   {
+      id: user._id,
+      role: user.role,
+      email: user.email,
+      ...(user.role === 'caregiver' && { department: user.department })
+    }
+
+    console.log(check,"checking department")
+
     // Only send access token in response body
     res.status(200).json({ 
       message: 'OTP verified successfully', 
@@ -295,6 +301,7 @@ exports.verifyOtp = async (req, res) => {
         id: user._id,
         role: user.role,
         email: user.email,
+        ...(user.role === 'caregiver' && { department: user.department })
       }
     });
   } catch (error) {
